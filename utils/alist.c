@@ -44,7 +44,7 @@ int array_list_add(p_array_list alist, void* item) {
             return i;
         }
     }
-    int index = (expand_array_list(alist) / 2) + 1;
+    int index = (int) ((expand_array_list(alist) / 2) + 1);
     alist->array[index] = item;
     alist->count++;
     return index;

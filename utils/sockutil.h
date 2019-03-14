@@ -7,6 +7,9 @@
  * ----------------------------------------------------------------------------
  */
 
+#ifndef _SOCKUTIL_H_
+#define _SOCKUTIL_H_
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -26,3 +29,5 @@ int create_udp_socket();
 p_sockaddr_in create_sockaddr(unsigned short port);
 int bind_socket(int sockfd, p_sockaddr_in addr);
 int set_nonblocking(int sockfd);
+
+#endif // _SOCKUTIL_H_

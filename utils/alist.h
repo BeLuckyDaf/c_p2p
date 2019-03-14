@@ -7,6 +7,9 @@
  * ----------------------------------------------------------------------------
  */
 
+#ifndef _ALIST_H_
+#define _ALIST_H_
+
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -28,3 +31,5 @@ int array_list_remove_at(p_array_list alist, int index);
 int array_list_iter(p_array_list alist);
 int array_list_next(p_array_list alist, int iter);
 void* array_list_get(p_array_list alist, int index);
+
+#endif // _ALIST_H_
