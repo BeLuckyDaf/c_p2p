@@ -2,21 +2,88 @@
 // Created by Vladislav on 3/14/2019.
 //
 
+#include <dirent.h>
+#include <sys/stat.h>
 #include "server.h"
 
 char splitby = ':';
 pthread_mutex_t mutex;
 p_array_list peers_list;
+p_array_list files_list;
 char my_name[NODE_NAME_LENGTH];
+
+char *dirpath = "shared";
+
+// FILES
+
+DIR* get_dir_ptr() {
+    DIR* dirptr = opendir(dirpath);
+    if (dirptr == NULL) {
+        if (mkdir(dirpath, 0770) != 0) {
+            printf("could not create shared dir, crashed");
+            exit(-1);
+        }
+        dirptr = opendir(dirpath);
+    }
+    return dirptr;
+}
+
+int file_exists(char* path) {
+    if (access(path, W_OK) != -1) return 1;
+    return 0;
+}
+
+file_data* parse_file(char* line) {
+    char* strtok_saveptr;
+    char* part = strtok_r(line, ":", &strtok_saveptr);
+    if (part == NULL) return NULL;
+    file_data* data = (file_data*)malloc(sizeof(file_data));
+    strcpy(data->path, part);
+    part = strtok_r(NULL, ":", &strtok_saveptr);
+    if (part == NULL) return NULL;
+    int size = atoi(part);
+    if (size == 0 && part[0] != '0') return NULL;
+    data->size = (size_t) size;
+    return data;
+}
+
+// END FILES
 
 void p2p_initialize(char* name) {
     pthread_mutex_init(&mutex, NULL);
     peers_list = create_array_list(INITIAL_LIST_SIZE);
+    files_list = create_array_list(INITIAL_LIST_SIZE);
 
     size_t len = strlen(name);
     size_t bytes_to_copy = len > NODE_NAME_LENGTH - 1 ? NODE_NAME_LENGTH - 1 : len;
     memcpy(my_name, name, bytes_to_copy);
     my_name[bytes_to_copy] = '\0';
+
+    DIR* dirptr = get_dir_ptr();
+    struct dirent* entry;
+    while((entry = readdir(dirptr)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        file_data* fldata = (file_data*)malloc(sizeof(file_data));
+        memset(fldata, 0, sizeof(file_data));
+        strcpy(fldata->path, entry->d_name);
+        char path[FILEPATH_LENGTH + 1];
+        sprintf(path, "%s/%s", dirpath, fldata->path);
+        int fd = open(path, O_RDONLY);
+        ssize_t brd;
+        char c;
+
+        char word = 0;
+        while((brd = read(fd, &c, 1)) > 0) {
+            if (c != ' ' && c != '\n') {
+                if (word == 1) {
+                    fldata->size++;
+                    word = 0;
+                }
+            } else word = 1;
+        }
+        array_list_add(files_list, fldata);
+        printf("path: %s, size: %ld\n", fldata->path, fldata->size);
+    }
 }
 
 void p2p_initialize_network_connection(char *addr, unsigned short port) {
@@ -92,10 +159,39 @@ void p2p_initialize_network_connection(char *addr, unsigned short port) {
     }
 
     // send sync files
-    sprintf(message_buffer, "%s\n.\n", COMMAND_SYNC_FILE_LIST_TEXT);
-    send(tcpsock, message_buffer, strlen(message_buffer), 0);
+    char mbuf[PAYLOAD_BUFFER_SIZE];
+    sprintf(mbuf, "%s", COMMAND_SYNC_FILE_LIST_TEXT);
 
-    // syncing files here
+    LOCK(mutex);
+    int nodeiter = array_list_iter(files_list);
+    file_data* fldata;
+    while(nodeiter >= 0) {
+        fldata = array_list_get(files_list, nodeiter);
+        sprintf(mbuf + strlen(mbuf), "\n%s:%ld", fldata->path, fldata->size);
+        nodeiter = array_list_next(files_list, nodeiter);
+    }
+    UNLOCK(mutex);
+
+    sprintf(mbuf + strlen(mbuf), "\n.\n");
+    send(tcpsock, mbuf, strlen(mbuf), 0);
+
+    char *get_files_saveptr;
+    if (recv(tcpsock, mbuf, PAYLOAD_BUFFER_SIZE, 0) < 1) {
+        printf("did not receive file list\n");
+        close(tcpsock);
+        return;
+    }
+    char *line = strtok_r(mbuf, MESSAGE_PART_DELIM, &saveptr);
+    while(line != NULL && strcmp(line, MESSAGE_DELIM) != 0) {
+        file_data* data = parse_file(line);
+        if (data != NULL) {
+            LOCK(mutex);
+            array_list_add(files_list, data);
+            UNLOCK(mutex);
+            printf("file: %s, size: %ld\n", data->path, data->size);
+        }
+        line = strtok_r(NULL, MESSAGE_PART_DELIM, &saveptr);
+    }
 
     close(tcpsock);
 }
@@ -104,6 +200,7 @@ int parse_command(char *command) {
     if (strcmp(command, COMMAND_HELO_TEXT) == 0) return COMMAND_HELO;
     else if (strcmp(command, COMMAND_GET_NODE_LIST_TEXT) == 0) return COMMAND_GET_NODE_LIST;
     else if (strcmp(command, COMMAND_SYNC_FILE_LIST_TEXT) == 0) return COMMAND_SYNC_FILE_LIST;
+    else if (strcmp(command, COMMAND_RETR_TEXT) == 0) return COMMAND_RETR;
     else return -1;
 }
 
@@ -147,24 +244,188 @@ int handle_request(char *message_buffer, client_data cldata) {
         // print the newly added node
         printf("new node connected: ");
         print_node(peer_node);
+
+        // he's gonna send GET_NODE_LIST
+        // gotta respond here
+        char message_buffer[PAYLOAD_BUFFER_SIZE];
+        char *get_nodes_saveptr;
+        if (recv(cldata.clsock, message_buffer, PAYLOAD_BUFFER_SIZE, 0) < 1) {
+            printf("did not receive request for nodes\n");
+            return 0;
+        }
+        char *line = strtok_r(message_buffer, MESSAGE_PART_DELIM, &get_nodes_saveptr);
+        if (strcmp(line, COMMAND_GET_NODE_LIST_TEXT) != 0) {
+            printf("expected node request command, received shit\n");
+            return 0;
+        }
+        LOCK(mutex);
+        int nodeiter = array_list_iter(peers_list);
+        char address_buffer[INET_ADDRSTRLEN];
+        p_network_node node;
+        while(nodeiter >= 0) {
+            node = array_list_get(peers_list, nodeiter);
+            if (node->nodeaddr.sin_addr.s_addr != cldata.claddr.sin_addr.s_addr) {
+                inet_ntop(AF_INET, &node->nodeaddr.sin_addr, address_buffer, INET_ADDRSTRLEN);
+                sprintf(message_buffer, "%s:%s:%d\n", node->name, address_buffer, ntohs(node->nodeaddr.sin_port));
+                send(cldata.clsock, message_buffer, strlen(message_buffer), 0);
+            }
+            nodeiter = array_list_next(peers_list, nodeiter);
+        }
+        UNLOCK(mutex);
+        send(cldata.clsock, ".\n", strlen(".\n"), 0);
+
+        // then he'll ask for the file list
+        // gonna have to give it too
+        char *get_files_saveptr;
+        if (recv(cldata.clsock, message_buffer, PAYLOAD_BUFFER_SIZE, 0) < 1) {
+            printf("did not receive request for files\n");
+            return 0;
+        }
+        line = strtok_r(message_buffer, MESSAGE_PART_DELIM, &get_nodes_saveptr);
+        if (strcmp(line, COMMAND_SYNC_FILE_LIST_TEXT) != 0) {
+            printf("expected files request command, received shit\n");
+            return 0;
+        }
+        line = strtok_r(NULL, MESSAGE_PART_DELIM, &get_nodes_saveptr);
+        while(line != NULL && strcmp(line, MESSAGE_DELIM) != 0) {
+            file_data* data = parse_file(line);
+            if (data != NULL) {
+                LOCK(mutex);
+                array_list_add(files_list, data);
+                UNLOCK(mutex);
+                printf("file: %s, size: %ld\n", data->path, data->size);
+            }
+            line = strtok_r(NULL, MESSAGE_PART_DELIM, &get_nodes_saveptr);
+        }
+        LOCK(mutex);
+        nodeiter = array_list_iter(files_list);
+        file_data* fldata;
+        while(nodeiter >= 0) {
+            fldata = array_list_get(files_list, nodeiter);
+            sprintf(message_buffer, "%s:%ld\n", fldata->path, fldata->size);
+            send(cldata.clsock, message_buffer, strlen(message_buffer), 0);
+            nodeiter = array_list_next(files_list, nodeiter);
+        }
+        UNLOCK(mutex);
+        send(cldata.clsock, ".\n", strlen(".\n"), 0);
+
+
+        // tell everyone that there is a new node
+        nodeiter = array_list_iter(peers_list);
+        int connsock;
+        inet_ntop(AF_INET, &cldata.claddr.sin_addr, address_buffer, INET_ADDRSTRLEN);
+        sprintf(message_buffer, "%s\n%s:%s:%d\n.\n", COMMAND_NEW_NODE_TEXT,
+                helo_name, address_buffer, ntohs(cldata.claddr.sin_port));
+        while(nodeiter >= 0) {
+            connsock = create_tcp_socket();
+            node = array_list_get(peers_list, nodeiter);
+            if (node->nodeaddr.sin_addr.s_addr != cldata.claddr.sin_addr.s_addr) {
+                if (connect(connsock, (p_sockaddr)&node->nodeaddr, sizeof(struct sockaddr_in)) != 0) {
+                    printf("could not connect");
+                } else {
+                    send(cldata.clsock, message_buffer, strlen(message_buffer), 0);
+                }
+            }
+            close(connsock);
+            nodeiter = array_list_next(peers_list, nodeiter);
+        }
+
+        close(cldata.clsock);
         return 0;
     }
 
     switch (command) {
         case COMMAND_GET_NODE_LIST:
             printf("GET_NODE_LIST command received.\n");
+
+            int nodeiter = array_list_iter(peers_list);
+            char address_buffer[INET_ADDRSTRLEN];
+            p_network_node node;
+            while(nodeiter >= 0) {
+                node = array_list_get(peers_list, nodeiter);
+                if (node->nodeaddr.sin_addr.s_addr != cldata.claddr.sin_addr.s_addr) {
+                    inet_ntop(AF_INET, &node->nodeaddr.sin_addr, address_buffer, INET_ADDRSTRLEN);
+                    sprintf(message_buffer, "%s:%s:%d\n", node->name, address_buffer, ntohs(node->nodeaddr.sin_port));
+                    send(cldata.clsock, message_buffer, strlen(message_buffer), 0);
+                }
+                nodeiter = array_list_next(peers_list, nodeiter);
+            }
+            UNLOCK(mutex);
+            send(cldata.clsock, ".\n", strlen(".\n"), 0);
             break;
         case COMMAND_SYNC_FILE_LIST:
             printf("SYNC_FILE_LIST command received.\n");
+
+            message_line = strtok_r(NULL, MESSAGE_PART_DELIM, &strtok_saveptr);
+            while(message_line != NULL && strcmp(message_line, MESSAGE_DELIM) != 0) {
+                file_data* data = parse_file(message_line);
+                if (data != NULL) {
+                    LOCK(mutex);
+                    array_list_add(files_list, data);
+                    UNLOCK(mutex);
+                    printf("file: %s, size: %ld\n", data->path, data->size);
+                }
+                message_line = strtok_r(NULL, MESSAGE_PART_DELIM, &strtok_saveptr);
+            }
+            LOCK(mutex);
+            nodeiter = array_list_iter(files_list);
+            file_data* fldata;
+            while(nodeiter >= 0) {
+                fldata = array_list_get(files_list, nodeiter);
+                sprintf(message_buffer, "%s:%ld\n", fldata->path, fldata->size);
+                send(cldata.clsock, message_buffer, strlen(message_buffer), 0);
+                nodeiter = array_list_next(files_list, nodeiter);
+            }
+            UNLOCK(mutex);
+            send(cldata.clsock, ".\n", strlen(".\n"), 0);
+
+            break;
+        case COMMAND_NEW_NODE:
+            printf("NEW_NODE command received.\n");
+            message_line = strtok_r(NULL, MESSAGE_PART_DELIM, &strtok_saveptr);
+            p_network_node new_node = parse_node(message_line, splitby);
+            if (new_node != NULL) {
+                LOCK(mutex);
+                array_list_add(peers_list, new_node);
+                UNLOCK(mutex);
+                printf("new node added: %s\n", message_line);
+            } else {
+                printf("could not parse node\n");
+            }
+            break;
+        case COMMAND_RETR:
+            printf("RETR command received.\n");
+            message_line = strtok_r(NULL, MESSAGE_PART_DELIM, &strtok_saveptr);
+            char path[FILEPATH_LENGTH];
+            sprintf(path, "%s/%s", dirpath, message_line);
+            char msgbuf[PAYLOAD_BUFFER_SIZE];
+            char c;
+            size_t ind = 0;
+            memset(msgbuf, 0, PAYLOAD_BUFFER_SIZE);
+            if (file_exists(path) == 1) {
+                int fd = open(path, O_RDONLY);
+                if (fd == -1) {
+                    printf("could not open file '%s'\n", path);
+                    break;
+                }
+                while(read(fd, &c, 1) > 0) {
+                    if (ind == PAYLOAD_BUFFER_SIZE-3) break;
+                    if (c == ' ' || c == '\n') msgbuf[ind] = '\n';
+                    else msgbuf[ind] = c;
+                    ind++;
+                }
+                msgbuf[PAYLOAD_BUFFER_SIZE-3] = '\n';
+                msgbuf[PAYLOAD_BUFFER_SIZE-2] = '.';
+                msgbuf[PAYLOAD_BUFFER_SIZE-1] = '\n';
+                send(cldata.clsock, msgbuf, strlen(msgbuf), 0);
+                close(fd);
+            }
             break;
         default:
-            printf("Invalid command received: %s\n", message_line);
+            printf("invalid command received: %s\n", message_line);
     }
 
-    while (message_line != NULL) {
-        message_line = strtok_r(NULL, MESSAGE_PART_DELIM, &strtok_saveptr);
-    }
-
+    close(cldata.clsock);
     return 0;
 }
 

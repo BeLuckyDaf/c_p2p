@@ -6,7 +6,8 @@
 #define P2P_NODE_H
 
 #define NODE_NAME_LENGTH 30
-#define PING_TIMEOUT_VALUE 5
+#define PING_TIMEOUT_VALUE 30
+#define FILEPATH_LENGTH 256
 
 typedef struct {
     char name[NODE_NAME_LENGTH];
@@ -18,6 +19,11 @@ typedef struct {
     struct sockaddr_in claddr;
     int clsock;
 } client_data;
+
+typedef struct {
+    char path[FILEPATH_LENGTH];
+    size_t size;
+} file_data;
 
 typedef network_node* p_network_node;
 

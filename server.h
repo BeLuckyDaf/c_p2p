@@ -33,6 +33,10 @@
 #define COMMAND_GET_NODE_LIST_TEXT "GET_NODE_LIST"
 #define COMMAND_SYNC_FILE_LIST 2
 #define COMMAND_SYNC_FILE_LIST_TEXT "SYNC_FILE_LIST"
+#define COMMAND_NEW_NODE 3
+#define COMMAND_NEW_NODE_TEXT "NEW_NODE"
+#define COMMAND_RETR 4
+#define COMMAND_RETR_TEXT "RETR"
 
 void p2p_initialize(char* name);
 void p2p_initialize_network_connection(char *addr, unsigned short port);
