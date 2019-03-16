@@ -20,6 +20,7 @@ void print_node(p_network_node node) {
 p_network_node create_empty_node() {
     p_network_node node = (p_network_node)malloc(sizeof(network_node));
     memset(node, 0, sizeof(network_node));
+    node->pingval = PING_TIMEOUT_VALUE;
     return node;
 }
 
@@ -46,6 +47,17 @@ int find_char(char ch, char* str, int from, int to, int seq) {
 int find_char_ind(char ch, char* str, size_t len) {
     for (int i = 0; i < len && str[i] != '\0'; i++) {
         if (str[i] == ch) return i;
+    }
+    return -1;
+}
+
+int address_exists(p_array_list alist, p_sockaddr_in address) {
+    int iterator = array_list_iter(alist);
+    p_network_node peer_node;
+    while (iterator >= 0) {
+        peer_node = array_list_get(alist, iterator);
+        if (peer_node->nodeaddr.sin_addr.s_addr == address->sin_addr.s_addr) return iterator;
+        iterator = array_list_next(alist, iterator);
     }
     return -1;
 }

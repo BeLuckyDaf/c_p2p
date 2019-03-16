@@ -16,6 +16,7 @@
 #define PAYLOAD_BUFFER_SIZE 512
 #define INPUT_STREAM_BUFFER_SIZE 512
 #define PING_DELAY_SECONDS 2
+#define PING_MESSAGE "ping"
 #define PONG_MESSAGE "pong"
 #define INITIAL_LIST_SIZE 10
 
@@ -26,11 +27,20 @@
 #define MESSAGE_DELIM_CH '.'
 #define MESSAGE_PART_DELIM_CH '\n'
 
+#define COMMAND_HELO 0
+#define COMMAND_HELO_TEXT "HELO"
+#define COMMAND_GET_NODE_LIST 1
+#define COMMAND_GET_NODE_LIST_TEXT "GET_NODE_LIST"
+#define COMMAND_SYNC_FILE_LIST 2
+#define COMMAND_SYNC_FILE_LIST_TEXT "SYNC_FILE_LIST"
+
 void p2p_initialize(char* name);
 void p2p_initialize_network_connection(char *addr, unsigned short port);
 void* p2p_process_client(void *cldata);
 void* p2p_master_server();
 void* p2p_ping_master();
 void* p2p_pinger();
+
+ssize_t p2p_find_end_line(char *str, char *delimiter);
 
 #endif //P2P_SERVER_H
