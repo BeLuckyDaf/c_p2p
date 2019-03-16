@@ -72,7 +72,7 @@ void p2p_initialize(char* name) {
         ssize_t brd;
         char c;
 
-        char word = 0;
+        char word = 1;
         while((brd = read(fd, &c, 1)) > 0) {
             if (c != ' ' && c != '\n') {
                 if (word == 1) {
