@@ -90,7 +90,7 @@ void* array_list_get(p_array_list alist, int index) {
 
 
 void array_list_free_all(p_array_list alist){
-    for (int i = array_list_iter(alist);i!=-1;i++){
+    for (int i = array_list_iter(alist);i!=-1;i = array_list_next(nodes,i)){
         void* current = array_list_get(alist, i);
         free(current);
         array_list_remove_at(alist, i);
