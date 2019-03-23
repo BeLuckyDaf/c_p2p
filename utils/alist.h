@@ -31,5 +31,6 @@ int array_list_remove_at(p_array_list alist, int index);
 int array_list_iter(p_array_list alist);
 int array_list_next(p_array_list alist, int iter);
 void* array_list_get(p_array_list alist, int index);
+void array_list_free_all(p_array_list alist);
 
 #endif // _ALIST_H_
