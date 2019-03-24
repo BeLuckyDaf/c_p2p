@@ -24,7 +24,7 @@ DIR* get_dir_ptr() {
     DIR* dirptr = opendir(shared_folder_path);
     if (dirptr == NULL) {
         if (mkdir(shared_folder_path, 0770) != 0) {
-            printf("could not create shared dir, crashed");
+            printf("<Directory>: could not create shared dir, crashed");
             exit(-1);
         }
         dirptr = opendir(shared_folder_path);
@@ -137,14 +137,9 @@ void p2p_initialize(char* name, char* ip, unsigned short port) {
     self.address.sin_port = htons(port);
     inet_pton(AF_INET, ip, &self.address.sin_addr);
 
-    struct stat st;
-    if (stat(shared_folder_path, &st) == -1) {
-        return;
-    }
-
     DIR* dirptr = get_dir_ptr();
     struct dirent* entry;
-    printf("Files found in shared folder:\n");
+    printf("<Directory>: files found in shared folder:\n");
     while((entry = readdir(dirptr)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
         file_data* fldata = (file_data*)malloc(sizeof(file_data));
@@ -168,7 +163,6 @@ void p2p_initialize(char* name, char* ip, unsigned short port) {
         array_list_add(self.file_list, fldata);
         printf("- %s (%ld words)\n", fldata->path, fldata->size);
     }
-    printf("\n");
 }
 
 void p2p_initialize_network_connection(char *addr, unsigned short port) {
@@ -176,7 +170,9 @@ void p2p_initialize_network_connection(char *addr, unsigned short port) {
     inet_pton(AF_INET, addr, &address.sin_addr);
     address.sin_port = htons(port);
     address.sin_family = AF_INET;
-    send_sync(&address);
+    if (send_sync(&address) == -1) {
+        printf("Error: could not connect to the host, waiting for connections\n");
+    }
 }
 
 int is_known(db_node* node) {
@@ -197,7 +193,7 @@ void recv_until(int sock, char* buf, size_t bytes, int flags) {
         count += received;
         if (count == bytes) return;
     }
-    printf("Could not receive everything\n");
+    printf("Error: could not receive everything\n");
 }
 
 int handle_request(int sockfd) {
@@ -244,15 +240,18 @@ int handle_sync(int sockfd) {
     int known = is_known(node);
     if (known == 0) {
         array_list_add(db, node);
-        printf("\n");
-        printf("New node connected: %s\n", node->name);
-        printf("Files:\n");
+        printf("<Nodes>: new node connected: %s\n", node->name);
 
-        int iter = array_list_iter(node->file_list);
-        while(iter >= 0) {
-            char* filepath = array_list_get(node->file_list, iter);
-            printf(" - %s\n", filepath);
-            iter = array_list_next(node->file_list, iter);
+        if (node->file_list->count > 0) {
+            printf("<Files>: list of files:\n");
+            int iter = array_list_iter(node->file_list);
+            while (iter >= 0) {
+                char *filepath = array_list_get(node->file_list, iter);
+                printf(" - %s\n", filepath);
+                iter = array_list_next(node->file_list, iter);
+            }
+        } else {
+            printf("<Files>: the host has not provided shared files\n");
         }
     }
 
@@ -280,7 +279,9 @@ int handle_sync(int sockfd) {
 
 int send_sync(p_sockaddr_in address) {
     int sock = create_tcp_socket();
-    connect(sock, (p_sockaddr)address, sizeof(struct sockaddr_in));
+    if (connect(sock, (p_sockaddr)address, sizeof(struct sockaddr_in)) != 0) {
+        return -1;
+    }
     char command[PAYLOAD_BUFFER_SIZE];
     memset(command, 0, PAYLOAD_BUFFER_SIZE);
     command[0] = '1';
@@ -305,7 +306,11 @@ int send_sync(p_sockaddr_in address) {
 
 int send_request(db_node node, char* filepath) {
     int sock = create_tcp_socket();
-    connect(sock, (p_sockaddr)&node.address, sizeof(struct sockaddr_in));
+    printf("<Request>: trying to receive \"%s\" from \"%s\"\n", filepath, node.name);
+    if (connect(sock, (p_sockaddr)&node.address, sizeof(struct sockaddr_in)) != 0) {
+        printf("<Error>: could not connect to host sharing the file (%s)\n", node.name);
+        return -1;
+    }
     char command[PAYLOAD_BUFFER_SIZE];
     memset(command, 0, PAYLOAD_BUFFER_SIZE);
     command[0] = '0';
@@ -325,7 +330,7 @@ int send_request(db_node node, char* filepath) {
         mkdir(downloaded_folder_path, 0744);
     }
 
-    printf("\nFile contents (words):\n");
+    printf("<Request>: file contents (words):\n");
     int fd = open(full_path, O_WRONLY | O_CREAT, 0744);
     while(count > 0) {
         memset(line, 0, PAYLOAD_BUFFER_SIZE);
@@ -334,7 +339,7 @@ int send_request(db_node node, char* filepath) {
         printf("- %s\n", line);
         count--;
     }
-    printf("Done. File saved in \"%s\"\n", full_path);
+    printf("<Request>: file saved in \"%s\"\n", full_path);
 
     close(fd);
     close(sock);
@@ -347,7 +352,9 @@ void *sync_sender() {
         int iter = array_list_iter(db);
         while(iter >= 0) {
             db_node* node = array_list_get(db, iter);
-            send_sync(&node->address);
+            if (send_sync(&node->address) == -1) {
+                printf("<Sync>: node \"%s\" is not available\n", node->name);
+            }
             iter = array_list_next(db, iter);
         }
         UNLOCK(mutex);
@@ -361,7 +368,7 @@ int find_and_request_file(char* filepath) {
         db_node* node = array_list_get(db, iter);
 
         int file_iter = array_list_iter(node->file_list);
-        while(iter >= 0) {
+        while(file_iter >= 0) {
             char* file = array_list_get(node->file_list, file_iter);
             if (strcmp(file, filepath) == 0) {
                 send_request(*node, file);
@@ -388,7 +395,7 @@ void *p2p_process_client(void *cldata) {
             handle_sync(data.clsock);
             break;
         default:
-            printf("received shit\n");
+            printf("<Error>: received shit\n");
             break;
     }
 
@@ -400,14 +407,14 @@ void* p2p_master_server() {
     int master_server_socket = create_tcp_socket();
     p_sockaddr_in sin = create_sockaddr(master_port);
     if (bind_socket(master_server_socket, sin) != 0) {
-        printf("could not bind\n");
+        printf("<Server>: could not bind the given address\n");
     }
 
     if (listen(master_server_socket, MAX_QUEUE) != 0) {
-        printf("could not listen\n");
+        printf("<Server>: could not listening\n");
     }
 
-    printf("Listening at port %d\n", ntohs(sin->sin_port));
+    printf("<Server>: started listening at port %d\n", ntohs(sin->sin_port));
 
     while(1) {
         struct sockaddr_in cin = {0};
@@ -416,7 +423,7 @@ void* p2p_master_server() {
         int client_socket = accept(master_server_socket, (p_sockaddr) &cin, &socket_length);
 
         if (client_socket == -1) {
-            printf("Error accepting connection...");
+            printf("<Server>: error accepting connection\n");
             break;
         }
 
