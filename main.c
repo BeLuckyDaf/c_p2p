@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
     sleep(1);
 
     if (strcmp(argv[1], "+") == 0) {
-        printf("Please type filename ('.' to cancel):\n");
+        printf("\nPlease type filename ('.' to cancel):\n");
         char file[PAYLOAD_BUFFER_SIZE];
         scanf("%s", file);
         if (strcmp(file, ".") != 0) {

@@ -15,18 +15,19 @@ db_node self;
 char my_name[NODE_NAME_LENGTH];
 unsigned short master_port;
 
-char *dirpath = "shared";
+char *shared_folder_path = "shared";
+char *downloaded_folder_path = "downloaded";
 
 // FILES
 
 DIR* get_dir_ptr() {
-    DIR* dirptr = opendir(dirpath);
+    DIR* dirptr = opendir(shared_folder_path);
     if (dirptr == NULL) {
-        if (mkdir(dirpath, 0770) != 0) {
+        if (mkdir(shared_folder_path, 0770) != 0) {
             printf("could not create shared dir, crashed");
             exit(-1);
         }
-        dirptr = opendir(dirpath);
+        dirptr = opendir(shared_folder_path);
     }
     return dirptr;
 }
@@ -46,25 +47,6 @@ size_t get_file_size(char *path) {
     }
 
     return sz;
-}
-
-int file_exists(char* path) {
-    if (access(path, W_OK) != -1) return 1;
-    return 0;
-}
-
-file_data* parse_file(char* line) {
-    char* strtok_saveptr;
-    char* part = strtok_r(line, ":", &strtok_saveptr);
-    if (part == NULL) return NULL;
-    file_data* data = (file_data*)malloc(sizeof(file_data));
-    strcpy(data->path, part);
-    part = strtok_r(NULL, ":", &strtok_saveptr);
-    if (part == NULL) return NULL;
-    int size = atoi(part);
-    if (size == 0 && part[0] != '0') return NULL;
-    data->size = (size_t) size;
-    return data;
 }
 
 db_node* parse_sync_node(char* line) {
@@ -141,7 +123,6 @@ char* node_to_string_no_files(db_node* node) {
 void p2p_initialize(char* name, char* ip, unsigned short port) {
     pthread_mutex_init(&mutex, NULL);
     peers_list = create_array_list(INITIAL_LIST_SIZE);
-    files_list = create_array_list(INITIAL_LIST_SIZE);
     db = create_array_list(INITIAL_LIST_SIZE);
 
     size_t len = strlen(name);
@@ -152,20 +133,25 @@ void p2p_initialize(char* name, char* ip, unsigned short port) {
     master_port = port;
 
     strcpy(self.name, my_name);
-    self.file_list = files_list;
+    self.file_list = create_array_list(INITIAL_LIST_SIZE);
     self.address.sin_port = htons(port);
     inet_pton(AF_INET, ip, &self.address.sin_addr);
 
+    struct stat st;
+    if (stat(shared_folder_path, &st) == -1) {
+        return;
+    }
 
     DIR* dirptr = get_dir_ptr();
     struct dirent* entry;
+    printf("Files found in shared folder:\n");
     while((entry = readdir(dirptr)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
         file_data* fldata = (file_data*)malloc(sizeof(file_data));
         memset(fldata, 0, sizeof(file_data));
         strcpy(fldata->path, entry->d_name);
         char path[PAYLOAD_BUFFER_SIZE];
-        sprintf(path, "%s/%s", dirpath, fldata->path);
+        sprintf(path, "%s/%s", shared_folder_path, fldata->path);
         int fd = open(path, O_RDONLY);
         ssize_t brd;
         char c;
@@ -179,13 +165,13 @@ void p2p_initialize(char* name, char* ip, unsigned short port) {
                 }
             } else word = 1;
         }
-        array_list_add(files_list, fldata);
-        printf("path: %s, size: %ld\n", fldata->path, fldata->size);
+        array_list_add(self.file_list, fldata);
+        printf("- %s (%ld words)\n", fldata->path, fldata->size);
     }
+    printf("\n");
 }
 
 void p2p_initialize_network_connection(char *addr, unsigned short port) {
-
     struct sockaddr_in address;
     inet_pton(AF_INET, addr, &address.sin_addr);
     address.sin_port = htons(port);
@@ -211,7 +197,7 @@ void recv_until(int sock, char* buf, size_t bytes, int flags) {
         count += received;
         if (count == bytes) return;
     }
-    printf("could not receive everything\n");
+    printf("Could not receive everything\n");
 }
 
 int handle_request(int sockfd) {
@@ -219,7 +205,7 @@ int handle_request(int sockfd) {
 
     recv_until(sockfd, file_path, PAYLOAD_BUFFER_SIZE, 0);
     char full_path[PAYLOAD_BUFFER_SIZE];
-    sprintf(full_path, "%s/%s", dirpath, file_path);
+    sprintf(full_path, "%s/%s", shared_folder_path, file_path);
     int reqfd = open(full_path, O_RDONLY);
     size_t sz = get_file_size(full_path);
     char wordbuf[PAYLOAD_BUFFER_SIZE];
@@ -253,20 +239,19 @@ int handle_sync(int sockfd) {
     char log[1500];
     memset(log, 0, 1500);
 
-    strcat(log, "\nreceived sync\n");
-    strcat(log, line);
-    strcat(log, "\n");
-
     db_node* node = parse_sync_node(line);
     LOCK(mutex);
     int known = is_known(node);
     if (known == 0) {
         array_list_add(db, node);
+        printf("\n");
+        printf("New node connected: %s\n", node->name);
+        printf("Files:\n");
 
         int iter = array_list_iter(node->file_list);
         while(iter >= 0) {
             char* filepath = array_list_get(node->file_list, iter);
-            printf("new file: %s\n", filepath);
+            printf(" - %s\n", filepath);
             iter = array_list_next(node->file_list, iter);
         }
     }
@@ -275,9 +260,6 @@ int handle_sync(int sockfd) {
 
     recv_until(sockfd, line, PAYLOAD_BUFFER_SIZE, 0);
     int count = atoi(line);
-
-    strcat(log, line);
-    strcat(log, "\n");
 
     for (int i = 0; i < count; i++) {
         recv_until(sockfd, line, PAYLOAD_BUFFER_SIZE, 0);
@@ -292,9 +274,6 @@ int handle_sync(int sockfd) {
         }
         UNLOCK(mutex);
     }
-    strcat(log, "ended sync\n");
-
-    //printf("%s", log);
 
     return 0;
 }
@@ -337,12 +316,27 @@ int send_request(db_node node, char* filepath) {
     recv_until(sock, word_count, PAYLOAD_BUFFER_SIZE, 0);
     int count = atoi(word_count);
     char line[PAYLOAD_BUFFER_SIZE];
+    char full_path[PAYLOAD_BUFFER_SIZE];
+    memset(full_path, 0, PAYLOAD_BUFFER_SIZE);
+    sprintf(full_path, "%s/%s", downloaded_folder_path, filepath);
+
+    struct stat st;
+    if (stat(downloaded_folder_path, &st) == -1) {
+        mkdir(downloaded_folder_path, 0744);
+    }
+
+    printf("\nFile contents (words):\n");
+    int fd = open(full_path, O_WRONLY | O_CREAT, 0744);
     while(count > 0) {
         memset(line, 0, PAYLOAD_BUFFER_SIZE);
         recv_until(sock, line, PAYLOAD_BUFFER_SIZE, 0);
-        printf("%s\n", line);
+        write(fd, line, strlen(line));
+        printf("- %s\n", line);
         count--;
     }
+    printf("Done. File saved in \"%s\"\n", full_path);
+
+    close(fd);
     close(sock);
     return 0;
 }
