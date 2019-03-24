@@ -25,6 +25,12 @@ typedef struct {
     size_t size;
 } file_data;
 
+typedef struct {
+    char name[NODE_NAME_LENGTH];
+    struct sockaddr_in address;
+    p_array_list file_list;
+} db_node;
+
 typedef network_node* p_network_node;
 
 p_network_node create_empty_node();
