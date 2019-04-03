@@ -8,11 +8,16 @@ find_package(Threads)
 include_directories(.)
 
 add_executable(p2p
-        utils/alist.c
+        third_party/alist.c
         node.c
-        utils/sockutil.c
+        third_party/sockutil.c
+        third_party/rxi/map.c
         server.c
         main.c)
+
+add_executable(ddos
+        third_party/sockutil.c
+        ddos/ddos.c)
 
 target_link_libraries(p2p ${CMAKE_THREAD_LIBS_INIT})
 

@@ -1,8 +1,6 @@
 // by Vladislav Smirnov
 // 10.03.2019
 
-#include "utils/sockutil.h"
-#include "utils/alist.h"
 #include "node.h"
 
 int min(int a, int b) {

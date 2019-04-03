@@ -9,6 +9,9 @@
 #define PING_TIMEOUT_VALUE 30
 #define FILEPATH_LENGTH 256
 
+#include "third_party/sockutil.h"
+#include "third_party/alist.h"
+
 typedef struct {
     char name[NODE_NAME_LENGTH];
     struct sockaddr_in nodeaddr;
@@ -18,6 +21,7 @@ typedef struct {
 typedef struct {
     struct sockaddr_in claddr;
     int clsock;
+    char* hash;
 } client_data;
 
 typedef struct {

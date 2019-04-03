@@ -5,15 +5,16 @@
 #ifndef P2P_SERVER_H
 #define P2P_SERVER_H
 
-#include "utils/alist.h"
-#include "utils/sockutil.h"
+#include "third_party/alist.h"
+#include "third_party/sockutil.h"
 #include <pthread.h>
 #include "node.h"
 
 #define MASTER_PORT 12000
 #define MAX_QUEUE 3
-#define PAYLOAD_BUFFER_SIZE 512
+#define PAYLOAD_BUFFER_SIZE 1024
 #define INITIAL_LIST_SIZE 10
+#define SYNC_DELAY 5
 
 #define LOCK(M) (pthread_mutex_lock(&(M)))
 #define UNLOCK(M) (pthread_mutex_unlock(&(M)))
